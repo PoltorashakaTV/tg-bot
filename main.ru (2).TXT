@@ -1,0 +1,81 @@
+import os
+import telebot
+import sqlite3
+
+# --- Получаем токен ---
+TOKEN = os.environ.get("BOT_TOKEN")
+if not TOKEN:
+    raise Exception("❌ BOT_TOKEN не найден в Secrets!")
+
+bot = telebot.TeleBot(TOKEN)
+
+# --- Инициализация базы данных ---
+def init_db():
+    conn = sqlite3.connect("gamers.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            nick TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- Сохранение ника ---
+def save_user_nick(user_id, nick):
+    conn = sqlite3.connect("gamers.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO users (id, nick)
+        VALUES (?, ?)
+        ON CONFLICT(id) DO UPDATE SET nick=excluded.nick
+    """, (user_id, nick))
+    conn.commit()
+    conn.close()
+
+# --- Получение ника ---
+def get_user_nick(user_id):
+    conn = sqlite3.connect("gamers.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT nick FROM users WHERE id = ?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+# --- Команда /ник ---
+@bot.message_handler(commands=['ник'])
+def save_nick(message):
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) < 2:
+        bot.reply_to(message, "Напиши: /ник [твой ник]")
+        return
+
+    nick = parts[1].strip()
+    if not nick:
+        bot.reply_to(message, "❌ Ник не может быть пустым.")
+        return
+
+    save_user_nick(message.from_user.id, nick)
+    bot.reply_to(message, f"✅ Запомнил! Твой игровой ник: {nick}")
+
+# --- Команда /кто и /кто? ---
+@bot.message_handler(commands=['кто', 'кто?'])
+def who_is(message):
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Ответь этой командой на сообщение игрока, чтобы узнать его ник.")
+        return
+
+    target_user = message.reply_to_message.from_user
+    nick = get_user_nick(target_user.id)
+
+    if nick:
+        bot.reply_to(message, f"🎮 Ник пользователя {target_user.first_name}: {nick}")
+    else:
+        bot.reply_to(message, f"❓ {target_user.first_name} ещё не указал ник через /ник")
+
+print("🤖 Бот запущен...")
+bot.infinity_polling()
