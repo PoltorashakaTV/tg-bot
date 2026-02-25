@@ -1,0 +1,95 @@
+import os
+import telebot
+import sqlite3
+
+# --- Токен ---
+TOKEN = os.environ.get("BOT_TOKEN")
+if not TOKEN:
+    raise Exception("❌ BOT_TOKEN не найден!")
+
+bot = telebot.TeleBot(TOKEN)
+
+# --- Инициализация базы данных ---
+def init_db():
+    conn = sqlite3.connect("gamers.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            nick TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- Сохраняем ник ---
+def save_user_nick(user_id, nick):
+    conn = sqlite3.connect("gamers.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO users (id, nick)
+        VALUES (?, ?)
+        ON CONFLICT(id) DO UPDATE SET nick=excluded.nick
+    """, (user_id, nick))
+    conn.commit()
+    conn.close()
+
+# --- Получаем ник ---
+def get_user_nick(user_id):
+    conn = sqlite3.connect("gamers.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT nick FROM users WHERE id = ?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+# --- Команда /ник (для всех) ---
+@bot.message_handler(commands=['ник'])
+def save_nick(message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        bot.reply_to(message, "Напиши: /ник [твой ник]")
+        return
+    nick = parts[1].strip()
+    save_user_nick(message.from_user.id, nick)
+    bot.reply_to(message, f"✅ Запомнил! Твой игровой ник: {nick}")
+
+# --- Команда /кто ---
+@bot.message_handler(commands=['кто'])
+def who_is(message):
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Ответь этой командой на сообщение игрока.")
+        return
+    target = message.reply_to_message.from_user
+    nick = get_user_nick(target.id)
+    if nick:
+        bot.reply_to(message, f"🎮 Ник пользователя {target.first_name}: {nick}")
+    else:
+        bot.reply_to(message, f"❓ {target.first_name} ещё не сохранил ник через /ник")
+
+# --- Список пользователей, кто может вызывать /all ---
+ALLOWED_USERS = [123456789, 987654321]  # сюда айди участников, которые могут использовать /all
+
+# --- Команда /all (только для определённых) ---
+@bot.message_handler(commands=['all'])
+def mention_all(message):
+    if message.from_user.id not in ALLOWED_USERS:
+        bot.reply_to(message, "❌ У тебя нет прав вызывать эту команду.")
+        return
+
+    conn = sqlite3.connect("gamers.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT nick FROM users")
+    nicks = cursor.fetchall()
+    conn.close()
+
+    if nicks:
+        mentions = " ".join([f"@{nick[0]}" for nick in nicks])
+        bot.send_message(message.chat.id, f"🎮 Внимание всем! {mentions}")
+    else:
+        bot.send_message(message.chat.id, "❌ Никто ещё не сохранил свой ник через /ник")
+
+print("🤖 Бот запущен...")
+bot.infinity_polling()
